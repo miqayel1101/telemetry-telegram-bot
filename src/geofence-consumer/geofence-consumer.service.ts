@@ -52,6 +52,8 @@ export class GeofenceConsumerService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
+    // Wait for Redis to be ready before creating consumer group
+    await this.waitForRedis();
     await this.ensureConsumerGroup();
 
     this.running = true;
@@ -70,6 +72,19 @@ export class GeofenceConsumerService implements OnModuleInit, OnModuleDestroy {
       msg: 'geofence.consumer.stopped',
       consumerGroup: CONSUMER_GROUP,
     });
+  }
+
+  private async waitForRedis(maxRetries = 10, delayMs = 2000): Promise<void> {
+    for (let i = 0; i < maxRetries; i++) {
+      try {
+        await this.redisClient!.ping();
+        return;
+      } catch {
+        this.logger.warn({ msg: 'geofence.consumer.redis_not_ready', attempt: i + 1, maxRetries });
+        await new Promise((r) => setTimeout(r, delayMs));
+      }
+    }
+    throw new Error('Redis not available after max retries');
   }
 
   private async ensureConsumerGroup(): Promise<void> {
