@@ -9,6 +9,7 @@ import { RedisModule } from './redis/redis.module';
 import { CoreApiModule } from './core-api/core-api.module';
 import { LinkingModule } from './linking/linking.module';
 import { GeofenceConsumerModule } from './geofence-consumer/geofence-consumer.module';
+import { BillingConsumerModule } from './billing-consumer/billing-consumer.module';
 import {
   TelegramUserEntity,
   LinkingTokenEntity,
@@ -69,6 +70,7 @@ import {
     CoreApiModule,
     LinkingModule,
     GeofenceConsumerModule,
+    BillingConsumerModule,
   ],
 })
 export class AppModule {}
