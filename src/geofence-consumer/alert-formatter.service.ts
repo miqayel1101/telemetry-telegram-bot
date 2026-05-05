@@ -28,12 +28,8 @@ export class AlertFormatterService {
     const inlineKeyboard = [
       [
         {
-          text: '📍 Location',
+          text: '📍 Show location',
           callback_data: `loc:${event.vehicleId}`,
-        },
-        {
-          text: '🚗 Vehicle',
-          callback_data: `veh:${event.vehicleId}`,
         },
       ],
     ];
