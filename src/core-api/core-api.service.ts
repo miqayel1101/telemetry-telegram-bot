@@ -138,7 +138,12 @@ export class CoreApiService {
         return null;
       }
 
-      return (await response.json()) as unknown;
+      const json = (await response.json()) as Record<string, unknown>;
+      // Unwrap haydrive ResponseInterceptor envelope: { success, data }
+      if (json && typeof json === 'object' && 'data' in json) {
+        return json.data;
+      }
+      return json;
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.warn({
