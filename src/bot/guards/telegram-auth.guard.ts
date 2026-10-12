@@ -6,6 +6,7 @@ import { Logger } from 'nestjs-pino';
 import { LinkingService } from '../../linking/linking.service';
 import { IS_PUBLIC_KEY } from '../decorators';
 import { CacheEntry, TelegramAuthUser } from '../interfaces';
+import { I18nService } from '../../i18n';
 
 const CACHE_TTL_MS = 30_000;
 
@@ -17,6 +18,7 @@ export class TelegramAuthGuard implements CanActivate {
     private readonly reflector: Reflector,
     private readonly linkingService: LinkingService,
     private readonly logger: Logger,
+    private readonly i18n: I18nService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -71,7 +73,8 @@ export class TelegramAuthGuard implements CanActivate {
         error: message,
       });
       if (isPrivateChat) {
-        await ctx.reply('Something went wrong, please try again later.');
+        const tr = await this.i18n.forContext(ctx);
+        await ctx.reply(tr.t('somethingWrong'));
       }
       return false;
     }
@@ -83,10 +86,12 @@ export class TelegramAuthGuard implements CanActivate {
         chatType,
         reason: 'not_linked',
       });
-      if (isPrivateChat) {
-        await ctx.reply(
-          "You're not connected. Visit your dashboard -> Settings -> Integrations -> Telegram to connect.",
-        );
+      const tr = await this.i18n.forContext(ctx);
+      if (ctx.callbackQuery) {
+        // A button tapped (e.g. under a group alert) must get an answer, or it spins forever.
+        await ctx.answerCbQuery(tr.t('notLinkedShort'), { show_alert: true }).catch(() => undefined);
+      } else if (isPrivateChat) {
+        await ctx.reply(tr.t('notLinked'));
       }
       return false;
     }

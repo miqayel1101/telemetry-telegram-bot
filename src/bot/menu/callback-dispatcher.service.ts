@@ -10,6 +10,7 @@ import { MenuService } from './menu.service';
 import { ScopeResolverService } from './scope-resolver.service';
 import { TelegramAuthUser } from '../interfaces';
 import { sendOrEdit } from './telegram-reply.util';
+import { I18nService } from '../../i18n';
 
 type AuthCtx = Context & { state: { user: TelegramAuthUser } };
 
@@ -24,6 +25,7 @@ export class CallbackDispatcherService {
     private readonly menuService: MenuService,
     private readonly scopeResolver: ScopeResolverService,
     private readonly logger: Logger,
+    private readonly i18n: I18nService,
   ) {}
 
   async dispatch(ctx: AuthCtx): Promise<void> {
@@ -112,7 +114,7 @@ export class CallbackDispatcherService {
       case 'back': {
         const dest = parts[1];
         if (dest === 'menu') {
-          const menu = this.menuService.buildMainMenu();
+          const menu = this.menuService.buildMainMenu(await this.i18n.forContext(ctx));
           await sendOrEdit(ctx, menu.text, menu.reply_markup, this.logger);
         } else if (dest === 'vehicles') {
           await this.vehiclesHandler.handle(ctx, scope.fleetId, 0);
@@ -144,7 +146,8 @@ export class CallbackDispatcherService {
       telegramUserId: ctx.from?.id,
     });
     try {
-      await ctx.answerCbQuery('Unknown action');
+      const tr = await this.i18n.forContext(ctx);
+      await ctx.answerCbQuery(tr.t('unknownAction'));
     } catch {
       // ignore
     }

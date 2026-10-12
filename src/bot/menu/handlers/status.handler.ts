@@ -6,8 +6,8 @@ import { MenuCacheService } from '../menu-cache.service';
 import { MenuService } from '../menu.service';
 import { TelegramAuthUser } from '../../interfaces';
 import { sendOrEdit, safeReply } from '../telegram-reply.util';
+import { I18nService } from '../../../i18n';
 
-const ERROR_TEXT = 'Could not load data, please try again in a moment.';
 
 @Injectable()
 export class StatusHandler {
@@ -16,6 +16,7 @@ export class StatusHandler {
     private readonly menuCacheService: MenuCacheService,
     private readonly menuService: MenuService,
     private readonly logger: Logger,
+    private readonly i18n: I18nService,
   ) {}
 
   async handle(
@@ -23,6 +24,7 @@ export class StatusHandler {
     fleetId: number | undefined,
   ): Promise<void> {
     const { coreUserId } = ctx.state.user;
+    const tr = await this.i18n.forContext(ctx);
     const start = Date.now();
 
     let status = this.menuCacheService.getStatus<Awaited<ReturnType<CoreApiService['getFleetStatus']>>>(
@@ -40,7 +42,7 @@ export class StatusHandler {
           coreUserId,
           error: err instanceof Error ? err.message : String(err),
         });
-        await safeReply(ctx, ERROR_TEXT);
+        await safeReply(ctx, tr.t('errorLoad'));
         return;
       }
 
@@ -51,7 +53,7 @@ export class StatusHandler {
           coreUserId,
           statusCode: 0,
         });
-        await safeReply(ctx, ERROR_TEXT);
+        await safeReply(ctx, tr.t('errorLoad'));
         return;
       }
 
@@ -66,7 +68,7 @@ export class StatusHandler {
       latencyMs: Date.now() - start,
     });
 
-    const menu = this.menuService.buildFleetStatus(status);
+    const menu = this.menuService.buildFleetStatus(tr, status);
     await sendOrEdit(ctx, menu.text, menu.reply_markup, this.logger);
   }
 }

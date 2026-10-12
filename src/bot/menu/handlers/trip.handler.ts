@@ -4,15 +4,15 @@ import { Context } from 'telegraf';
 import { CoreApiService } from '../../../core-api/core-api.service';
 import { TelegramAuthUser } from '../../interfaces';
 import { sendOrEdit, safeReply } from '../telegram-reply.util';
+import { I18nService } from '../../../i18n';
 
-const ERROR_TEXT = 'Could not load data, please try again in a moment.';
-const VEHICLE_GONE_TEXT = 'This vehicle is no longer available.';
 
 @Injectable()
 export class TripHandler {
   constructor(
     private readonly coreApiService: CoreApiService,
     private readonly logger: Logger,
+    private readonly i18n: I18nService,
   ) {}
 
   async handle(
@@ -20,6 +20,7 @@ export class TripHandler {
     vehicleId: number,
   ): Promise<void> {
     const { coreUserId } = ctx.state.user;
+    const tr = await this.i18n.forContext(ctx);
 
     let trip;
     try {
@@ -31,36 +32,44 @@ export class TripHandler {
         coreUserId,
         error: err instanceof Error ? err.message : String(err),
       });
-      await safeReply(ctx, ERROR_TEXT);
+      await safeReply(ctx, tr.t('errorLoad'));
       return;
     }
 
     if (!trip) {
-      await sendOrEdit(ctx, VEHICLE_GONE_TEXT, {
-        inline_keyboard: [[{ text: 'Back to vehicle', callback_data: `veh:${vehicleId}` }]],
+      await sendOrEdit(ctx, tr.t('vehicleGone'), {
+        inline_keyboard: [[{ text: tr.t('btnBackVehicle'), callback_data: `veh:${vehicleId}` }]],
       }, this.logger);
       return;
     }
 
     const drivingMin = Math.round(trip.drivingTimeSeconds / 60);
     const lines = [
-      `Today's trip summary:`,
-      `Distance: ${trip.distanceKm.toFixed(1)} km`,
-      `Driving time: ${drivingMin} min`,
-      `Stops: ${trip.stops}`,
+      tr.t('tripTitle'),
+      tr.t('tripDistance', { km: trip.distanceKm.toFixed(1) }),
+      tr.t('tripDriving', { min: drivingMin }),
+      tr.t('tripStops', { count: trip.stops }),
     ];
 
     if (trip.startLocation) {
-      lines.push(`Start: ${trip.startLocation.latitude.toFixed(4)}, ${trip.startLocation.longitude.toFixed(4)}`);
+      lines.push(
+        tr.t('tripStart', {
+          coords: `${trip.startLocation.latitude.toFixed(4)}, ${trip.startLocation.longitude.toFixed(4)}`,
+        }),
+      );
     }
     if (trip.endLocation) {
-      lines.push(`Last position: ${trip.endLocation.latitude.toFixed(4)}, ${trip.endLocation.longitude.toFixed(4)}`);
+      lines.push(
+        tr.t('tripLast', {
+          coords: `${trip.endLocation.latitude.toFixed(4)}, ${trip.endLocation.longitude.toFixed(4)}`,
+        }),
+      );
     }
 
     await sendOrEdit(ctx, lines.join('\n'), {
       inline_keyboard: [
-        [{ text: 'Show current location', callback_data: `loc:${vehicleId}` }],
-        [{ text: 'Back to vehicle', callback_data: `veh:${vehicleId}` }],
+        [{ text: tr.t('btnShowMap'), callback_data: `loc:${vehicleId}` }],
+        [{ text: tr.t('btnBackVehicle'), callback_data: `veh:${vehicleId}` }],
       ],
     }, this.logger);
   }

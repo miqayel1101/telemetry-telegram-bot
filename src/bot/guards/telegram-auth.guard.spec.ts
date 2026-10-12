@@ -6,6 +6,10 @@ import { Logger } from 'nestjs-pino';
 import { TelegramAuthGuard } from './telegram-auth.guard';
 import { LinkingService } from '../../linking/linking.service';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
+import { I18nService, LanguageEnum } from '../../i18n';
+import { createTestI18nService } from '../../i18n/i18n.testing';
+
+const hy = createTestI18nService().translator(LanguageEnum.HY);
 
 jest.mock('nestjs-telegraf', () => {
   const actual = jest.requireActual('nestjs-telegraf');
@@ -73,6 +77,7 @@ async function buildGuard(): Promise<{
       TelegramAuthGuard,
       Reflector,
       { provide: Logger, useValue: mockLogger },
+      { provide: I18nService, useValue: createTestI18nService() },
       { provide: LinkingService, useValue: mockLinkingService },
     ],
   }).compile();
@@ -144,11 +149,36 @@ describe('TelegramAuthGuard', () => {
 
       expect(result).toBe(false);
       expect(replyMock).toHaveBeenCalledWith(
-        expect.stringContaining("You're not connected"),
+        hy.t('notLinked'),
       );
       expect(mockLogger.warn).toHaveBeenCalledWith(
         expect.objectContaining({ msg: 'telegram.auth.denied', reason: 'not_linked' }),
       );
+    });
+  });
+
+  describe('unlinked user tapping a button', () => {
+    it('answers the button with an explanation so it does not spin forever', async () => {
+      const { guard, reflector } = await buildGuard();
+      const answerMock = jest.fn().mockResolvedValue(undefined);
+      const replyMock = jest.fn().mockResolvedValue(undefined);
+      const tgCtx = makeTgContext({
+        from: { id: 55555 },
+        chat: { id: -100777, type: 'supergroup' },
+        callbackQuery: { data: 'loc:42' },
+        answerCbQuery: answerMock,
+        reply: replyMock,
+      });
+      const execCtx = makeExecutionContext(false, tgCtx);
+
+      jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(false);
+      mockLinkingService.getUserLinkStatus.mockResolvedValue({ linked: false, coreUserId: null });
+
+      const result = await guard.canActivate(execCtx);
+
+      expect(result).toBe(false);
+      expect(answerMock).toHaveBeenCalledWith(hy.t('notLinkedShort'), { show_alert: true });
+      expect(replyMock).not.toHaveBeenCalled();
     });
   });
 
@@ -242,7 +272,7 @@ describe('TelegramAuthGuard', () => {
 
       expect(result).toBe(false);
       expect(replyMock).toHaveBeenCalledWith(
-        expect.stringContaining('Something went wrong'),
+        hy.t('somethingWrong'),
       );
       expect(mockLogger.error).toHaveBeenCalledWith(
         expect.objectContaining({ msg: 'telegram.auth.db-error', telegramUserId: '11111' }),

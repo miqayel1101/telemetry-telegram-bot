@@ -6,9 +6,9 @@ import { MenuCacheService } from '../menu-cache.service';
 import { MenuService } from '../menu.service';
 import { TelegramAuthUser } from '../../interfaces';
 import { sendOrEdit, safeReply } from '../telegram-reply.util';
+import { I18nService } from '../../../i18n';
 
 const PAGE_SIZE = 8;
-const ERROR_TEXT = 'Could not load data, please try again in a moment.';
 
 @Injectable()
 export class VehiclesHandler {
@@ -17,6 +17,7 @@ export class VehiclesHandler {
     private readonly menuCacheService: MenuCacheService,
     private readonly menuService: MenuService,
     private readonly logger: Logger,
+    private readonly i18n: I18nService,
   ) {}
 
   async handle(
@@ -25,6 +26,7 @@ export class VehiclesHandler {
     offset = 0,
   ): Promise<void> {
     const { coreUserId } = ctx.state.user;
+    const tr = await this.i18n.forContext(ctx);
     const page = Math.floor(offset / PAGE_SIZE);
 
     let response = this.menuCacheService.getVehicleList<Awaited<ReturnType<CoreApiService['getVehicles']>>>(
@@ -42,7 +44,7 @@ export class VehiclesHandler {
           coreUserId,
           error: err instanceof Error ? err.message : String(err),
         });
-        await safeReply(ctx, ERROR_TEXT);
+        await safeReply(ctx, tr.t('errorLoad'));
         return;
       }
 
@@ -53,7 +55,7 @@ export class VehiclesHandler {
           coreUserId,
           statusCode: 0,
         });
-        await safeReply(ctx, ERROR_TEXT);
+        await safeReply(ctx, tr.t('errorLoad'));
         return;
       }
 
@@ -62,7 +64,8 @@ export class VehiclesHandler {
 
     const clampedOffset = Math.min(offset, Math.max(0, response.total - PAGE_SIZE));
     const clampedPage = Math.floor(clampedOffset / PAGE_SIZE);
-    const wasClampedNote = offset > 0 && clampedOffset !== offset ? ' (showing from start)' : '';
+    const wasClampedNote =
+      offset > 0 && clampedOffset !== offset ? tr.t('vehiclesFromStart') : '';
 
     let displayResponse = response;
     if (clampedPage !== page) {
@@ -73,12 +76,12 @@ export class VehiclesHandler {
       }
     }
 
-    const menu = this.menuService.buildVehicleList(
-      displayResponse.data,
-      displayResponse.total,
-      clampedPage,
-      PAGE_SIZE,
-    );
+    const menu = this.menuService.buildVehicleList(tr, {
+      vehicles: displayResponse.data,
+      total: displayResponse.total,
+      page: clampedPage,
+      limit: PAGE_SIZE,
+    });
 
     if (wasClampedNote) {
       menu.text = menu.text + wasClampedNote;

@@ -10,11 +10,13 @@ import { CoreApiModule } from './core-api/core-api.module';
 import { LinkingModule } from './linking/linking.module';
 import { GeofenceConsumerModule } from './geofence-consumer/geofence-consumer.module';
 import { BillingConsumerModule } from './billing-consumer/billing-consumer.module';
+import { I18nModule } from './i18n';
 import {
   TelegramUserEntity,
   LinkingTokenEntity,
   FleetChatEntity,
   GeofenceAlertLogEntity,
+  ChatSettingEntity,
 } from './entities';
 
 @Module({
@@ -58,12 +60,14 @@ import {
           LinkingTokenEntity,
           FleetChatEntity,
           GeofenceAlertLogEntity,
+          ChatSettingEntity,
         ],
         synchronize: false,
         retryAttempts: 10,
         retryDelay: 3000,
       }),
     }),
+    I18nModule,
     RedisModule,
     HealthModule,
     BotModule,

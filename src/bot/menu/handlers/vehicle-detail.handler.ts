@@ -5,9 +5,8 @@ import { CoreApiService } from '../../../core-api/core-api.service';
 import { MenuService } from '../menu.service';
 import { TelegramAuthUser } from '../../interfaces';
 import { sendOrEdit, safeReply } from '../telegram-reply.util';
+import { I18nService } from '../../../i18n';
 
-const ERROR_TEXT = 'Could not load data, please try again in a moment.';
-const VEHICLE_GONE_TEXT = 'This vehicle is no longer available.';
 
 @Injectable()
 export class VehicleDetailHandler {
@@ -15,6 +14,7 @@ export class VehicleDetailHandler {
     private readonly coreApiService: CoreApiService,
     private readonly menuService: MenuService,
     private readonly logger: Logger,
+    private readonly i18n: I18nService,
   ) {}
 
   async handle(
@@ -22,6 +22,7 @@ export class VehicleDetailHandler {
     vehicleId: number,
   ): Promise<void> {
     const { coreUserId } = ctx.state.user;
+    const tr = await this.i18n.forContext(ctx);
     const start = Date.now();
 
     let telemetry;
@@ -34,7 +35,7 @@ export class VehicleDetailHandler {
         coreUserId,
         error: err instanceof Error ? err.message : String(err),
       });
-      await safeReply(ctx, ERROR_TEXT);
+      await safeReply(ctx, tr.t('errorLoad'));
       return;
     }
 
@@ -47,25 +48,29 @@ export class VehicleDetailHandler {
     });
 
     if (!telemetry) {
-      await sendOrEdit(ctx, VEHICLE_GONE_TEXT, {
-        inline_keyboard: [[{ text: 'Back to vehicles', callback_data: 'back:vehicles' }]],
+      await sendOrEdit(ctx, tr.t('vehicleGone'), {
+        inline_keyboard: [[{ text: tr.t('btnBackVehicles'), callback_data: 'back:vehicles' }]],
       }, this.logger);
       return;
     }
 
-    const ignitionStr =
-      telemetry.ignition === null ? 'Unknown' : telemetry.ignition ? 'On' : 'Off';
+    const ignitionState =
+      telemetry.ignition === null
+        ? tr.t('ignitionUnknown')
+        : telemetry.ignition
+          ? tr.t('ignitionOn')
+          : tr.t('ignitionOff');
     const statusLine = [
-      `Speed: ${telemetry.speed} km/h`,
-      `Ignition: ${ignitionStr}`,
-      `Last update: ${new Date(telemetry.timestamp).toLocaleString()}`,
+      tr.t('speed', { speed: telemetry.speed }),
+      tr.t('ignition', { state: ignitionState }),
+      tr.t('lastUpdate', { time: tr.dateTime(telemetry.timestamp) }),
     ].join('\n');
 
-    const card = this.menuService.buildVehicleCard(
-      vehicleId,
-      telemetry.licensePlate,
+    const card = this.menuService.buildVehicleCard(tr, {
+      id: vehicleId,
+      licensePlate: telemetry.licensePlate,
       statusLine,
-    );
+    });
 
     await sendOrEdit(ctx, card.text, card.reply_markup, this.logger);
   }

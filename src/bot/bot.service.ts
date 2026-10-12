@@ -1,14 +1,51 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, OnApplicationBootstrap } from '@nestjs/common';
 import { Logger } from 'nestjs-pino';
-import { Context } from 'telegraf';
+import { Context, Telegraf } from 'telegraf';
+import { InjectBot } from 'nestjs-telegraf';
 import { LinkingService } from '../linking/linking.service';
+import { RedeemGroupTokenResult } from '../linking/interfaces';
+import { CoreApiService } from '../core-api/core-api.service';
+import { I18nService, ITranslator, LANGUAGE_LABELS, LanguageEnum } from '../i18n';
+
+const ADMIN_STATUSES = ['administrator', 'creator'];
 
 @Injectable()
-export class BotService {
+export class BotService implements OnApplicationBootstrap {
   constructor(
     private readonly logger: Logger,
     private readonly linkingService: LinkingService,
+    private readonly coreApiService: CoreApiService,
+    private readonly i18n: I18nService,
+    @InjectBot() private readonly bot: Telegraf,
   ) {}
+
+  // The "/" command list in Telegram, in each language (Armenian by default).
+  async onApplicationBootstrap(): Promise<void> {
+    for (const language of Object.values(LanguageEnum)) {
+      const tr = this.i18n.translator(language);
+      const commands = [
+        { command: 'menu', description: tr.t('cmdMenu') },
+        { command: 'vehicles', description: tr.t('cmdVehicles') },
+        { command: 'status', description: tr.t('cmdStatus') },
+        { command: 'where', description: tr.t('cmdWhere') },
+        { command: 'today', description: tr.t('cmdToday') },
+        { command: 'language', description: tr.t('cmdLanguage') },
+        { command: 'help', description: tr.t('cmdHelp') },
+      ];
+      try {
+        await this.bot.telegram.setMyCommands(
+          commands,
+          language === LanguageEnum.HY ? undefined : { language_code: language },
+        );
+      } catch (err: unknown) {
+        this.logger.warn({
+          msg: 'bot.commands.register-failed',
+          language,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  }
 
   handlePing(chatId: number, userId: number): string {
     this.logger.debug({ msg: 'bot.command.ping', chatId, userId });
@@ -16,24 +53,26 @@ export class BotService {
   }
 
   async handleStart(ctx: Context): Promise<void> {
-    const text = ctx.message && 'text' in ctx.message ? ctx.message.text : '';
-    const parts = text.trim().split(/\s+/);
-    const rawToken = parts.length > 1 ? parts[1] : null;
+    const rawToken = this.commandToken(ctx);
+
+    // "Add to group" links (t.me/<bot>?startgroup=<token>) arrive as /start in the group.
+    if (rawToken && this.isGroup(ctx)) {
+      await this.connectGroup(ctx, rawToken);
+      return;
+    }
+
+    const tr = await this.i18n.forContext(ctx);
     const telegramUserId = BigInt(ctx.from?.id ?? 0);
     const telegramUsername = ctx.from?.username ?? null;
 
     if (!rawToken) {
       const status = await this.linkingService.getUserLinkStatus(telegramUserId);
-      if (status.linked) {
-        await ctx.reply(
-          `You are currently linked to Haydrive (account #${status.coreUserId}). ` +
-            `Use the dashboard to manage your Telegram integration.`,
-        );
+      if (status.linked && status.coreUserId !== null) {
+        const user = await this.coreApiService.getUserDisplayName(status.coreUserId);
+        const name = user ? `${user.firstName} ${user.lastName}` : `#${status.coreUserId}`;
+        await ctx.reply(tr.t('startLinked', { name }));
       } else {
-        await ctx.reply(
-          'Welcome to Haydrive! To link your Telegram account, go to the Haydrive dashboard, ' +
-            'navigate to Settings → Telegram, and click "Generate Link".',
-        );
+        await ctx.reply(tr.t('startWelcome'));
       }
       return;
     }
@@ -47,103 +86,141 @@ export class BotService {
     switch (result.status) {
       case 'ok':
         await ctx.reply(
-          result.firstName
-            ? `Successfully linked! Welcome, ${result.firstName}. Type /menu to get started.`
-            : 'Connected successfully. Type /menu to get started.',
+          result.firstName ? tr.t('linkOkNamed', { name: result.firstName }) : tr.t('linkOk'),
         );
         break;
       case 'expired':
-        await ctx.reply(
-          'This link has expired. Please generate a new one from the dashboard.',
-        );
+        await ctx.reply(tr.t('linkExpired'));
         break;
       case 'already_used':
-        await ctx.reply('This link has already been used.');
+        await ctx.reply(tr.t('linkUsed'));
         break;
       case 'not_found':
       case 'wrong_purpose':
-        await ctx.reply(
-          'Invalid link. Please generate a new one from the dashboard.',
-        );
+        await ctx.reply(tr.t('linkInvalid'));
         break;
     }
   }
 
   async handleConnectGroup(ctx: Context): Promise<void> {
-    const chat = ctx.chat;
-    if (!chat || chat.type === 'private') {
-      await ctx.reply('This command can only be used in a group chat.');
+    const tr = await this.i18n.forContext(ctx);
+    if (!this.isGroup(ctx)) {
+      await ctx.reply(tr.t('groupOnly'));
       return;
     }
 
-    const text = ctx.message && 'text' in ctx.message ? ctx.message.text : '';
-    const parts = text.trim().split(/\s+/);
-    const rawToken = parts.length > 1 ? parts[1] : null;
-
+    const rawToken = this.commandToken(ctx);
     if (!rawToken) {
-      await ctx.reply(
-        'Usage: /connect_group <token>\n' +
-          'Generate a group linking token from the Haydrive dashboard.',
-      );
+      await ctx.reply(tr.t('groupUsage'));
       return;
     }
 
-    // Check bot admin status
-    const botId = ctx.botInfo?.id;
-    if (botId) {
-      try {
-        const member = await ctx.telegram.getChatMember(chat.id, botId);
-        if (member.status !== 'administrator' && member.status !== 'creator') {
-          await ctx.reply('Please make me an admin in this group first.');
-          return;
-        }
-      } catch {
-        await ctx.reply('Please make me an admin in this group first.');
-        return;
-      }
+    await this.connectGroup(ctx, rawToken);
+  }
+
+  async handleLanguagePrompt(ctx: Context): Promise<void> {
+    const tr = await this.i18n.forContext(ctx);
+    await ctx.reply(tr.t('languagePrompt'), {
+      reply_markup: {
+        inline_keyboard: [
+          Object.values(LanguageEnum).map((language) => ({
+            text: `${language === tr.language ? '✓ ' : ''}${LANGUAGE_LABELS[language]}`,
+            callback_data: `lang:${language}`,
+          })),
+        ],
+      },
+    });
+  }
+
+  async handleLanguageChosen(ctx: Context): Promise<void> {
+    const data = ctx.callbackQuery && 'data' in ctx.callbackQuery ? ctx.callbackQuery.data : '';
+    const language = Object.values(LanguageEnum).find((l) => data === `lang:${l}`);
+    const chatId = ctx.chat?.id;
+    if (!language || chatId === undefined) {
+      await ctx.answerCbQuery();
+      return;
     }
 
-    const chatId = BigInt(chat.id);
-    const chatTitle = 'title' in chat ? chat.title : null;
+    // In a group the language is everyone's, so only its admins choose it.
+    if (this.isGroup(ctx) && !(await this.isChatAdmin(ctx, ctx.from?.id))) {
+      const tr = await this.i18n.forContext(ctx);
+      await ctx.answerCbQuery(tr.t('languageAdminsOnly'), { show_alert: true });
+      return;
+    }
+
+    await this.i18n.setChatLanguage(String(chatId), language);
+    const tr = this.i18n.translator(language);
+    await ctx.answerCbQuery();
+    try {
+      await ctx.editMessageText(`✓ ${tr.t('languageSet')}`);
+    } catch {
+      await ctx.reply(`✓ ${tr.t('languageSet')}`);
+    }
+    this.logger.log({ msg: 'bot.language.set', chatId, language });
+  }
+
+  private async connectGroup(ctx: Context, rawToken: string): Promise<void> {
+    const chat = ctx.chat;
+    const tr = await this.i18n.forContext(ctx);
+    if (!chat || chat.type === 'private') {
+      await ctx.reply(tr.t('groupOnly'));
+      return;
+    }
+
+    if (ctx.botInfo?.id && !(await this.isChatAdmin(ctx, ctx.botInfo.id))) {
+      await ctx.reply(tr.t('groupNeedAdmin'));
+      return;
+    }
 
     const result = await this.linkingService.redeemGroupToken(
       rawToken,
-      chatId,
-      chatTitle ?? null,
+      BigInt(chat.id),
+      'title' in chat ? chat.title : null,
     );
 
+    await ctx.reply(this.groupResultText(tr, result));
+  }
+
+  private groupResultText(tr: ITranslator, result: RedeemGroupTokenResult): string {
     switch (result.status) {
       case 'ok':
-        await ctx.reply(
-          result.fleetName
-            ? `Group successfully linked to fleet "${result.fleetName}" (${result.companyName}). ` +
-                `Geofence alerts will be sent to this group.`
-            : 'Group successfully linked to fleet. Geofence alerts will be sent to this group.',
-        );
-        break;
+        return result.fleetName
+          ? tr.t('groupOkNamed', {
+              fleet: result.fleetName,
+              company: result.companyName ?? '',
+            })
+          : tr.t('groupOk');
       case 'expired':
-        await ctx.reply(
-          'This link has expired. Please generate a new one from the dashboard.',
-        );
-        break;
+        return tr.t('linkExpired');
       case 'already_used':
-        await ctx.reply('This link has already been used.');
-        break;
+        return tr.t('linkUsed');
       case 'wrong_purpose':
-        await ctx.reply(
-          'This token is not valid for group linking. Please use a group token from the dashboard.',
-        );
-        break;
+        return tr.t('groupWrongPurpose');
       case 'no_fleet':
-        await ctx.reply(
-          'Invalid token: no fleet associated. Please generate a new one from the dashboard.',
-        );
-        break;
-      case 'not_found':
-        await ctx.reply(
-          'Invalid link. Please generate a new one from the dashboard.',
-        );
-        break;
+        return tr.t('groupNoFleet');
+      default:
+        return tr.t('linkInvalid');
     }
+  }
+
+  private async isChatAdmin(ctx: Context, userId: number | undefined): Promise<boolean> {
+    if (!ctx.chat || userId === undefined) return false;
+    try {
+      const member = await ctx.telegram.getChatMember(ctx.chat.id, userId);
+      return ADMIN_STATUSES.includes(member.status);
+    } catch {
+      return false;
+    }
+  }
+
+  private isGroup(ctx: Context): boolean {
+    return ctx.chat?.type === 'group' || ctx.chat?.type === 'supergroup';
+  }
+
+  /** The first argument of a command: "/start abc" or "/start@bot abc" → "abc". */
+  private commandToken(ctx: Context): string | null {
+    const text = ctx.message && 'text' in ctx.message ? ctx.message.text : '';
+    const parts = text.trim().split(/\s+/);
+    return parts.length > 1 ? parts[1] : null;
   }
 }

@@ -2,6 +2,17 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { BotService } from './bot.service';
 import { LinkingService } from '../linking/linking.service';
 import { Logger } from 'nestjs-pino';
+import { getBotToken } from 'nestjs-telegraf';
+import { I18nService, LanguageEnum } from '../i18n';
+import { createTestI18nService } from '../i18n/i18n.testing';
+import { CoreApiService } from '../core-api/core-api.service';
+
+// Chats with no stored language and no Russian Telegram get Armenian.
+const hy = createTestI18nService().translator(LanguageEnum.HY);
+
+const mockCoreApiService = {
+  getUserDisplayName: jest.fn(),
+};
 
 const mockLinkingService = {
   getUserLinkStatus: jest.fn(),
@@ -33,7 +44,10 @@ describe('BotService', () => {
       providers: [
         BotService,
         { provide: Logger, useValue: { debug: jest.fn(), log: jest.fn(), warn: jest.fn() } },
+        { provide: I18nService, useValue: createTestI18nService() },
         { provide: LinkingService, useValue: mockLinkingService },
+        { provide: CoreApiService, useValue: mockCoreApiService },
+        { provide: getBotToken(), useValue: { telegram: { setMyCommands: jest.fn() } } },
       ],
     }).compile();
 
@@ -67,7 +81,7 @@ describe('BotService', () => {
         'testuser',
       );
       expect(ctx.reply).toHaveBeenCalledWith(
-        expect.stringContaining('Successfully linked'),
+        hy.t('linkOkNamed', { name: 'Alice' }),
       );
     });
 
@@ -78,7 +92,7 @@ describe('BotService', () => {
       await service.handleStart(ctx as never);
 
       expect(ctx.reply).toHaveBeenCalledWith(
-        expect.stringContaining('expired'),
+        hy.t('linkExpired'),
       );
     });
 
@@ -89,7 +103,7 @@ describe('BotService', () => {
       await service.handleStart(ctx as never);
 
       expect(ctx.reply).toHaveBeenCalledWith(
-        expect.stringContaining('already been used'),
+        hy.t('linkUsed'),
       );
     });
 
@@ -100,7 +114,7 @@ describe('BotService', () => {
       await service.handleStart(ctx as never);
 
       expect(ctx.reply).toHaveBeenCalledWith(
-        expect.stringContaining('Invalid link'),
+        hy.t('linkInvalid'),
       );
     });
 
@@ -111,19 +125,24 @@ describe('BotService', () => {
       await service.handleStart(ctx as never);
 
       expect(ctx.reply).toHaveBeenCalledWith(
-        expect.stringContaining('Invalid link'),
+        hy.t('linkInvalid'),
       );
     });
 
     it('without token → user linked', async () => {
       mockLinkingService.getUserLinkStatus.mockResolvedValue({ linked: true, coreUserId: 7 });
+      mockCoreApiService.getUserDisplayName.mockResolvedValue({
+        firstName: 'Alice',
+        lastName: 'Smith',
+        email: 'alice@example.com',
+      });
       const ctx = makeCtx({ message: { text: '/start' } });
 
       await service.handleStart(ctx as never);
 
       expect(mockLinkingService.getUserLinkStatus).toHaveBeenCalledWith(BigInt(12345));
       expect(ctx.reply).toHaveBeenCalledWith(
-        expect.stringContaining('currently linked'),
+        hy.t('startLinked', { name: 'Alice Smith' }),
       );
     });
 
@@ -134,7 +153,7 @@ describe('BotService', () => {
       await service.handleStart(ctx as never);
 
       expect(ctx.reply).toHaveBeenCalledWith(
-        expect.stringContaining('Generate Link'),
+        hy.t('startWelcome'),
       );
     });
   });
@@ -175,7 +194,7 @@ describe('BotService', () => {
 
       expect(mockLinkingService.redeemGroupToken).not.toHaveBeenCalled();
       expect(ctx.reply).toHaveBeenCalledWith(
-        expect.stringContaining('only be used in a group chat'),
+        hy.t('groupOnly'),
       );
     });
 
@@ -189,7 +208,7 @@ describe('BotService', () => {
 
       expect(mockLinkingService.redeemGroupToken).not.toHaveBeenCalled();
       expect(ctx.reply).toHaveBeenCalledWith(
-        expect.stringContaining('Usage:'),
+        hy.t('groupUsage'),
       );
     });
 
@@ -206,7 +225,7 @@ describe('BotService', () => {
 
       expect(mockLinkingService.redeemGroupToken).not.toHaveBeenCalled();
       expect(groupCtx.reply).toHaveBeenCalledWith(
-        expect.stringContaining('Please make me an admin'),
+        hy.t('groupNeedAdmin'),
       );
     });
 
@@ -220,7 +239,7 @@ describe('BotService', () => {
       await service.handleConnectGroup(ctx as never);
 
       expect(ctx.reply).toHaveBeenCalledWith(
-        expect.stringContaining('expired'),
+        hy.t('linkExpired'),
       );
     });
 
@@ -234,7 +253,7 @@ describe('BotService', () => {
       await service.handleConnectGroup(ctx as never);
 
       expect(ctx.reply).toHaveBeenCalledWith(
-        expect.stringContaining('already been used'),
+        hy.t('linkUsed'),
       );
     });
 
@@ -248,7 +267,7 @@ describe('BotService', () => {
       await service.handleConnectGroup(ctx as never);
 
       expect(ctx.reply).toHaveBeenCalledWith(
-        expect.stringContaining('Invalid link'),
+        hy.t('linkInvalid'),
       );
     });
 
@@ -262,7 +281,7 @@ describe('BotService', () => {
       await service.handleConnectGroup(ctx as never);
 
       expect(ctx.reply).toHaveBeenCalledWith(
-        expect.stringContaining('not valid for group linking'),
+        hy.t('groupWrongPurpose'),
       );
     });
 
@@ -276,8 +295,81 @@ describe('BotService', () => {
       await service.handleConnectGroup(ctx as never);
 
       expect(ctx.reply).toHaveBeenCalledWith(
-        expect.stringContaining('no fleet associated'),
+        hy.t('groupNoFleet'),
       );
+    });
+  });
+
+  describe('group links and language', () => {
+    it('/start with a token inside a group links the group (one-tap "add to group" link)', async () => {
+      mockLinkingService.redeemGroupToken.mockResolvedValue({
+        status: 'ok',
+        fleetId: 3,
+        coreUserId: 1,
+        fleetName: 'Fleet Alpha',
+        companyName: 'Acme',
+      });
+      const ctx = makeCtx({
+        chat: { id: -100555, type: 'supergroup', title: 'Dispatch' },
+        message: { text: '/start@telemetry_bot grouptoken' },
+      });
+
+      await service.handleStart(ctx as never);
+
+      expect(mockLinkingService.redeemUserToken).not.toHaveBeenCalled();
+      expect(mockLinkingService.redeemGroupToken).toHaveBeenCalledWith(
+        'grouptoken',
+        BigInt(-100555),
+        'Dispatch',
+      );
+      expect(ctx.reply).toHaveBeenCalledWith(
+        hy.t('groupOkNamed', { fleet: 'Fleet Alpha', company: 'Acme' }),
+      );
+    });
+
+    it('offers the three languages, marking the current one', async () => {
+      const ctx = makeCtx();
+
+      await service.handleLanguagePrompt(ctx as never);
+
+      const [text, extra] = (ctx.reply as jest.Mock).mock.calls[0];
+      expect(text).toBe(hy.t('languagePrompt'));
+      const buttons = extra.reply_markup.inline_keyboard[0];
+      expect(buttons.map((b: { callback_data: string }) => b.callback_data)).toEqual([
+        'lang:hy',
+        'lang:ru',
+        'lang:en',
+      ]);
+      expect(buttons[0].text).toBe('✓ Հայերեն');
+    });
+
+    it('lets only group admins change a group language', async () => {
+      const ctx = makeCtx({
+        chat: { id: -100555, type: 'group' },
+        callbackQuery: { data: 'lang:ru' },
+        answerCbQuery: jest.fn().mockResolvedValue(undefined),
+        editMessageText: jest.fn().mockResolvedValue(undefined),
+        telegram: { getChatMember: jest.fn().mockResolvedValue({ status: 'member' }) },
+      });
+
+      await service.handleLanguageChosen(ctx as never);
+
+      expect(ctx.answerCbQuery).toHaveBeenCalledWith(hy.t('languageAdminsOnly'), {
+        show_alert: true,
+      });
+      expect(ctx.editMessageText).not.toHaveBeenCalled();
+    });
+
+    it('confirms the chosen language in that language', async () => {
+      const ctx = makeCtx({
+        callbackQuery: { data: 'lang:en' },
+        answerCbQuery: jest.fn().mockResolvedValue(undefined),
+        editMessageText: jest.fn().mockResolvedValue(undefined),
+      });
+
+      await service.handleLanguageChosen(ctx as never);
+
+      expect(ctx.editMessageText).toHaveBeenCalledWith('✓ Language: English');
     });
   });
 });

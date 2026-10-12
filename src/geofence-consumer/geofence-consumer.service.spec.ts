@@ -13,6 +13,8 @@ import {
 import { IGeofenceStreamEvent } from './interfaces';
 import { GeofenceAlertLogEntity } from '../entities/geofence-alert-log.entity';
 import { FleetChatEntity } from '../entities/fleet-chat.entity';
+import { I18nService } from '../i18n';
+import { createTestI18nService } from '../i18n/i18n.testing';
 
 const mockLogger = {
   log: jest.fn(),
@@ -173,6 +175,7 @@ async function buildService(opts: BuildOptions = {}): Promise<{
       { provide: TelegramSenderService, useValue: mockSender },
       { provide: ConfigService, useValue: mockConfigService },
       { provide: Logger, useValue: mockLogger },
+      { provide: I18nService, useValue: createTestI18nService() },
     ],
   }).compile();
 
@@ -254,6 +257,7 @@ describe('GeofenceConsumerService', () => {
           { provide: TelegramSenderService, useValue: {} },
           { provide: ConfigService, useValue: mockConfigService },
           { provide: Logger, useValue: mockLogger },
+          { provide: I18nService, useValue: createTestI18nService() },
         ],
       }).compile();
 

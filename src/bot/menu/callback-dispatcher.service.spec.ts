@@ -8,6 +8,10 @@ import { TripHandler } from './handlers/trip.handler';
 import { MenuService } from './menu.service';
 import { ScopeResolverService } from './scope-resolver.service';
 import { Logger } from 'nestjs-pino';
+import { I18nService, LanguageEnum } from '../../i18n';
+import { createTestI18nService } from '../../i18n/i18n.testing';
+
+const hy = createTestI18nService().translator(LanguageEnum.HY);
 
 const mockLogger = { log: jest.fn(), warn: jest.fn(), debug: jest.fn(), error: jest.fn() };
 
@@ -48,6 +52,7 @@ async function buildService(): Promise<CallbackDispatcherService> {
       { provide: MenuService, useValue: mockMenuService },
       { provide: ScopeResolverService, useValue: mockScopeResolver },
       { provide: Logger, useValue: mockLogger },
+      { provide: I18nService, useValue: createTestI18nService() },
     ],
   }).compile();
   return module.get<CallbackDispatcherService>(CallbackDispatcherService);
@@ -116,7 +121,7 @@ describe('CallbackDispatcherService', () => {
     expect(mockLogger.warn).toHaveBeenCalledWith(
       expect.objectContaining({ msg: 'telegram.menu.unknown-callback' }),
     );
-    expect(ctx.answerCbQuery).toHaveBeenCalledWith('Unknown action');
+    expect(ctx.answerCbQuery).toHaveBeenCalledWith(hy.t('unknownAction'));
   });
 
   it('does nothing when callbackQuery has no data field', async () => {

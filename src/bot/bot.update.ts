@@ -1,4 +1,4 @@
-import { Update, Start, Command, Ctx, On } from 'nestjs-telegraf';
+import { Update, Start, Command, Ctx, On, Action } from 'nestjs-telegraf';
 import { Context } from 'telegraf';
 import { Logger } from 'nestjs-pino';
 import { BotService } from './bot.service';
@@ -8,8 +8,11 @@ import { MenuService } from './menu/menu.service';
 import { ScopeResolverService } from './menu/scope-resolver.service';
 import { CoreApiService } from '../core-api/core-api.service';
 import { TelegramAuthUser } from './interfaces';
+import { I18nService } from '../i18n';
 
 type AuthCtx = Context & { state: { user: TelegramAuthUser } };
+
+const PAGE_SIZE = 8;
 
 @Update()
 export class BotUpdate {
@@ -20,6 +23,7 @@ export class BotUpdate {
     private readonly scopeResolver: ScopeResolverService,
     private readonly coreApiService: CoreApiService,
     private readonly logger: Logger,
+    private readonly i18n: I18nService,
   ) {}
 
   @Public()
@@ -43,6 +47,20 @@ export class BotUpdate {
     await this.botService.handleConnectGroup(ctx);
   }
 
+  @Public()
+  @Command('language')
+  async onLanguage(@Ctx() ctx: Context): Promise<void> {
+    await this.botService.handleLanguagePrompt(ctx);
+  }
+
+  // Registered before the catch-all callback handler, and public: choosing a
+  // language must work before the person has linked their account.
+  @Public()
+  @Action(/^lang:/)
+  async onLanguageChosen(@Ctx() ctx: Context): Promise<void> {
+    await this.botService.handleLanguageChosen(ctx);
+  }
+
   @Command('menu')
   async onMenu(@Ctx() ctx: AuthCtx): Promise<void> {
     const { coreUserId } = ctx.state.user;
@@ -54,13 +72,14 @@ export class BotUpdate {
       chatType: ctx.chat?.type,
       fleetId: scope.fleetId,
     });
-    const menu = this.menuService.buildMainMenu();
+    const menu = this.menuService.buildMainMenu(await this.i18n.forContext(ctx));
     await ctx.reply(menu.text, { reply_markup: menu.reply_markup });
   }
 
   @Command('vehicles')
   async onVehicles(@Ctx() ctx: AuthCtx): Promise<void> {
     const { coreUserId } = ctx.state.user;
+    const tr = await this.i18n.forContext(ctx);
     const scope = await this.scopeResolver.resolve(ctx);
     this.logger.log({
       msg: 'telegram.menu.command',
@@ -69,21 +88,25 @@ export class BotUpdate {
       chatType: ctx.chat?.type,
       fleetId: scope.fleetId,
     });
-    const response = await this.coreApiService.getVehicles(coreUserId, scope.fleetId, 0, 8);
+    const response = await this.coreApiService.getVehicles(coreUserId, scope.fleetId, 0, PAGE_SIZE);
     if (!response) {
-      await ctx.reply('Could not load data, please try again in a moment.');
+      await ctx.reply(tr.t('errorLoad'));
       return;
     }
-    const menu = this.menuService.buildVehicleList(response.data, response.total, 0, 8);
+    const menu = this.menuService.buildVehicleList(tr, {
+      vehicles: response.data,
+      total: response.total,
+      page: 0,
+      limit: PAGE_SIZE,
+    });
     await ctx.reply(menu.text, { reply_markup: menu.reply_markup });
   }
 
   @Command('where')
   async onWhere(@Ctx() ctx: AuthCtx): Promise<void> {
     const { coreUserId } = ctx.state.user;
-    const text = ctx.message && 'text' in ctx.message ? ctx.message.text : '';
-    const parts = text.trim().split(/\s+/);
-    const plate = parts.length > 1 ? parts.slice(1).join(' ') : null;
+    const tr = await this.i18n.forContext(ctx);
+    const plate = this.commandArgument(ctx);
 
     this.logger.log({
       msg: 'telegram.menu.command',
@@ -93,40 +116,40 @@ export class BotUpdate {
     });
 
     if (!plate) {
-      await ctx.reply('Usage: /where <license_plate>');
+      await ctx.reply(tr.t('whereUsage'));
       return;
     }
 
-    const vehicles = await this.coreApiService.getVehicles(coreUserId, undefined, 0, 50);
-    if (!vehicles) {
-      await ctx.reply('Could not load data, please try again in a moment.');
+    const found = await this.coreApiService.findVehicleByPlate(coreUserId, plate);
+    if (!found) {
+      await ctx.reply(tr.t('errorLoad'));
+      return;
+    }
+    if (!found.vehicle) {
+      await ctx.reply(tr.t('plateNotFound', { plate }));
       return;
     }
 
-    const match = vehicles.data.find(
-      (v) => v.licensePlate.toLowerCase() === plate.toLowerCase(),
-    );
-
-    if (!match) {
-      await ctx.reply(`No vehicle found with plate "${plate}".`);
-      return;
-    }
-
-    const telemetry = await this.coreApiService.getVehicleTelemetry(match.id, coreUserId);
+    const telemetry = await this.coreApiService.getVehicleTelemetry(found.vehicle.id, coreUserId);
     if (!telemetry) {
-      await ctx.reply('This vehicle is no longer available.');
+      await ctx.reply(tr.t('vehicleGone'));
       return;
     }
 
     await ctx.replyWithLocation(telemetry.latitude, telemetry.longitude);
     await ctx.reply(
-      `${telemetry.licensePlate} — Speed: ${telemetry.speed} km/h\n${telemetry.googleMapsUrl}`,
+      tr.t('whereText', {
+        plate: telemetry.licensePlate,
+        speed: telemetry.speed,
+        url: telemetry.googleMapsUrl,
+      }),
     );
   }
 
   @Command('status')
   async onStatus(@Ctx() ctx: AuthCtx): Promise<void> {
     const { coreUserId } = ctx.state.user;
+    const tr = await this.i18n.forContext(ctx);
     const scope = await this.scopeResolver.resolve(ctx);
     this.logger.log({
       msg: 'telegram.menu.command',
@@ -137,19 +160,18 @@ export class BotUpdate {
     });
     const status = await this.coreApiService.getFleetStatus(coreUserId, scope.fleetId);
     if (!status) {
-      await ctx.reply('Could not load data, please try again in a moment.');
+      await ctx.reply(tr.t('errorLoad'));
       return;
     }
-    const menu = this.menuService.buildFleetStatus(status);
+    const menu = this.menuService.buildFleetStatus(tr, status);
     await ctx.reply(menu.text, { reply_markup: menu.reply_markup });
   }
 
   @Command('today')
   async onToday(@Ctx() ctx: AuthCtx): Promise<void> {
     const { coreUserId } = ctx.state.user;
-    const text = ctx.message && 'text' in ctx.message ? ctx.message.text : '';
-    const parts = text.trim().split(/\s+/);
-    const plate = parts.length > 1 ? parts.slice(1).join(' ') : null;
+    const tr = await this.i18n.forContext(ctx);
+    const plate = this.commandArgument(ctx);
 
     this.logger.log({
       msg: 'telegram.menu.command',
@@ -159,37 +181,31 @@ export class BotUpdate {
     });
 
     if (!plate) {
-      await ctx.reply('Usage: /today <license_plate>');
+      await ctx.reply(tr.t('todayUsage'));
       return;
     }
 
-    const vehicles = await this.coreApiService.getVehicles(coreUserId, undefined, 0, 50);
-    if (!vehicles) {
-      await ctx.reply('Could not load data, please try again in a moment.');
+    const found = await this.coreApiService.findVehicleByPlate(coreUserId, plate);
+    if (!found) {
+      await ctx.reply(tr.t('errorLoad'));
+      return;
+    }
+    if (!found.vehicle) {
+      await ctx.reply(tr.t('plateNotFound', { plate }));
       return;
     }
 
-    const match = vehicles.data.find(
-      (v) => v.licensePlate.toLowerCase() === plate.toLowerCase(),
-    );
-
-    if (!match) {
-      await ctx.reply(`No vehicle found with plate "${plate}".`);
-      return;
-    }
-
-    const trip = await this.coreApiService.getTripToday(match.id, coreUserId);
+    const trip = await this.coreApiService.getTripToday(found.vehicle.id, coreUserId);
     if (!trip) {
-      await ctx.reply('This vehicle is no longer available.');
+      await ctx.reply(tr.t('vehicleGone'));
       return;
     }
 
-    const drivingMin = Math.round(trip.drivingTimeSeconds / 60);
     const lines = [
-      `Today's trip summary for ${match.licensePlate}:`,
-      `Distance: ${trip.distanceKm.toFixed(1)} km`,
-      `Driving time: ${drivingMin} min`,
-      `Stops: ${trip.stops}`,
+      tr.t('tripTitlePlate', { plate: found.vehicle.licensePlate }),
+      tr.t('tripDistance', { km: trip.distanceKm.toFixed(1) }),
+      tr.t('tripDriving', { min: Math.round(trip.drivingTimeSeconds / 60) }),
+      tr.t('tripStops', { count: trip.stops }),
     ];
     await ctx.reply(lines.join('\n'));
   }
@@ -197,21 +213,19 @@ export class BotUpdate {
   @Public()
   @Command('help')
   async onHelp(@Ctx() ctx: Context): Promise<void> {
-    const helpText = [
-      'Available commands:',
-      '/menu — Open interactive menu',
-      '/vehicles — List your vehicles',
-      '/where <plate> — Show vehicle location on map',
-      '/status — Fleet status overview',
-      '/today <plate> — Today\'s trip summary',
-      '/help — Show this help message',
-      '/ping — Check bot is alive',
-    ].join('\n');
-    await ctx.reply(helpText);
+    const tr = await this.i18n.forContext(ctx);
+    await ctx.reply(tr.t('help'));
   }
 
   @On('callback_query')
   async onCallbackQuery(@Ctx() ctx: AuthCtx): Promise<void> {
     await this.callbackDispatcher.dispatch(ctx);
+  }
+
+  /** Everything after the command, e.g. "70 GG 007" from "/where 70 GG 007". */
+  private commandArgument(ctx: Context): string | null {
+    const text = ctx.message && 'text' in ctx.message ? ctx.message.text : '';
+    const parts = text.trim().split(/\s+/);
+    return parts.length > 1 ? parts.slice(1).join(' ') : null;
   }
 }

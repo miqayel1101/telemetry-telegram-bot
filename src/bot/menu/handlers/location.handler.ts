@@ -4,15 +4,15 @@ import { Context } from 'telegraf';
 import { CoreApiService } from '../../../core-api/core-api.service';
 import { TelegramAuthUser } from '../../interfaces';
 import { safeReply } from '../telegram-reply.util';
+import { I18nService } from '../../../i18n';
 
-const ERROR_TEXT = 'Could not load data, please try again in a moment.';
-const VEHICLE_GONE_TEXT = 'This vehicle is no longer available.';
 
 @Injectable()
 export class LocationHandler {
   constructor(
     private readonly coreApiService: CoreApiService,
     private readonly logger: Logger,
+    private readonly i18n: I18nService,
   ) {}
 
   async handle(
@@ -20,6 +20,7 @@ export class LocationHandler {
     vehicleId: number,
   ): Promise<void> {
     const { coreUserId } = ctx.state.user;
+    const tr = await this.i18n.forContext(ctx);
 
     let telemetry;
     try {
@@ -31,21 +32,21 @@ export class LocationHandler {
         coreUserId,
         error: err instanceof Error ? err.message : String(err),
       });
-      await safeReply(ctx, ERROR_TEXT);
+      await safeReply(ctx, tr.t('errorLoad'));
       return;
     }
 
     if (!telemetry) {
-      await safeReply(ctx, VEHICLE_GONE_TEXT);
+      await safeReply(ctx, tr.t('vehicleGone'));
       return;
     }
 
     await ctx.replyWithLocation(telemetry.latitude, telemetry.longitude);
     await ctx.reply(
-      `${telemetry.licensePlate} — Google Maps: ${telemetry.googleMapsUrl}`,
+      tr.t('mapLink', { plate: telemetry.licensePlate, url: telemetry.googleMapsUrl }),
       {
         reply_markup: {
-          inline_keyboard: [[{ text: 'Back to vehicle', callback_data: `veh:${vehicleId}` }]],
+          inline_keyboard: [[{ text: tr.t('btnBackVehicle'), callback_data: `veh:${vehicleId}` }]],
         },
       },
     );

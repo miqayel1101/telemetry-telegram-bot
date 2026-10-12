@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Logger } from 'nestjs-pino';
 import {
+  IVehicleListItem,
   UserDisplayName,
   FleetDisplayName,
   IVehicleListResponse,
@@ -74,6 +75,26 @@ export class CoreApiService {
       return null;
     }
     return data as IVehicleListResponse;
+  }
+
+  /**
+   * The vehicle in the person's scope with this plate (spaces, dashes and case
+   * ignored). `{ vehicle: null }` means no match; `null` means the core couldn't answer.
+   */
+  async findVehicleByPlate(
+    userId: number,
+    plate: string,
+  ): Promise<{ vehicle: IVehicleListItem | null } | null> {
+    const params = new URLSearchParams({ userId: String(userId), plate, limit: '1' });
+    const endpoint = `/api/internal/vehicles?${params.toString()}`;
+    const data = await this.fetchInternal(endpoint);
+    if (data === null) return null;
+    const d = data as Record<string, unknown>;
+    if (!Array.isArray(d.data)) {
+      this.logger.warn({ msg: 'core.api.unreachable', endpoint, error: 'Unexpected response shape' });
+      return null;
+    }
+    return { vehicle: (d.data[0] as IVehicleListItem | undefined) ?? null };
   }
 
   async getVehicleTelemetry(vehicleId: number, userId: number): Promise<IVehicleTelemetry | null> {

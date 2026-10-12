@@ -15,6 +15,7 @@ import {
   TelegramForbiddenError,
   TelegramSendExhaustedError,
 } from './telegram-sender.service';
+import { I18nService } from '../i18n';
 
 const STREAM_KEY = 'events:geofence';
 const CONSUMER_GROUP = 'telegram-bot-geofence';
@@ -36,6 +37,7 @@ export class GeofenceConsumerService implements OnModuleInit, OnModuleDestroy {
     private readonly telegramSender: TelegramSenderService,
     private readonly configService: ConfigService,
     private readonly logger: Logger,
+    private readonly i18n: I18nService,
   ) {
     this.consumerName = `consumer-${os.hostname()}-${process.pid}`;
   }
@@ -247,7 +249,7 @@ export class GeofenceConsumerService implements OnModuleInit, OnModuleDestroy {
       this.consecutiveDbErrors = 0;
 
       // Step 4: Format message
-      const alert = this.alertFormatter.format(event);
+      const alert = this.alertFormatter.format(event, await this.i18n.forChat(fleetChat.chatId));
 
       // Step 5: Send via rate-limited sender
       let telegramMessageId: string | null = null;

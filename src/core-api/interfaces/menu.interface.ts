@@ -27,7 +27,8 @@ export interface IVehicleTelemetry {
 }
 
 export interface IFleetStatus {
-  fleetName: string;
+  // null when the status covers everything the person can see, not one fleet
+  fleetName: string | null;
   totalVehicles: number;
   online: number;
   offline: number;

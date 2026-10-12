@@ -1,34 +1,34 @@
 import { Injectable } from '@nestjs/common';
 import { FormattedAlert, IGeofenceStreamEvent } from './interfaces';
+import { ITranslator } from '../i18n';
 
 @Injectable()
 export class AlertFormatterService {
-  format(event: IGeofenceStreamEvent): FormattedAlert {
+  format(event: IGeofenceStreamEvent, tr: ITranslator): FormattedAlert {
     const arrow = event.eventType === 'ENTRY' ? '➡️' : '⬅️';
-    const action = event.eventType === 'ENTRY' ? 'entered' : 'exited';
-    const ts = new Date(event.timestamp).toUTCString();
+    const action = event.eventType === 'ENTRY' ? tr.t('geoEntered') : tr.t('geoExited');
 
     const vehicleLabel = event.vehicleLabel
       ? ` (${this.escapeHtml(event.vehicleLabel)})`
       : '';
 
     const driverLine = event.driverName
-      ? `\n👤 <b>Driver:</b> ${this.escapeHtml(event.driverName)}`
+      ? `\n👤 <b>${tr.t('geoDriver')}:</b> ${this.escapeHtml(event.driverName)}`
       : '';
 
     const text =
-      `${arrow} <b>Geofence Alert</b>\n` +
+      `${arrow} <b>${tr.t('geoTitle')}</b>\n` +
       `\n` +
-      `🚗 <b>Vehicle:</b> ${this.escapeHtml(event.vehiclePlate)}${vehicleLabel}\n` +
-      `📍 <b>Zone:</b> ${this.escapeHtml(event.geofenceName)}\n` +
-      `🔔 <b>Event:</b> ${action.charAt(0).toUpperCase() + action.slice(1)}` +
+      `🚗 <b>${tr.t('geoVehicle')}:</b> ${this.escapeHtml(event.vehiclePlate)}${vehicleLabel}\n` +
+      `📍 <b>${tr.t('geoZone')}:</b> ${this.escapeHtml(event.geofenceName)}\n` +
+      `🔔 <b>${tr.t('geoEvent')}:</b> ${action}` +
       driverLine +
-      `\n⏰ <b>Time:</b> ${ts}`;
+      `\n⏰ <b>${tr.t('geoTime')}:</b> ${tr.dateTime(event.timestamp)}`;
 
     const inlineKeyboard = [
       [
         {
-          text: '📍 Show location',
+          text: tr.t('btnShowLocation'),
           callback_data: `loc:${event.vehicleId}`,
         },
       ],
