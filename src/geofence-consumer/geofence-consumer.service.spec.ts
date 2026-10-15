@@ -292,6 +292,39 @@ describe('GeofenceConsumerService', () => {
       );
     });
 
+    it('speeding (no zone): sent and logged with zone 0', async () => {
+      const { service, mockRedis, mockLogRepo } = await buildService();
+
+      await runProcessEntry(
+        service,
+        makeEvent({ eventType: 'SPEEDING', geofenceId: null, geofenceName: '', details: { speed: 112, limitKmh: 90 } }),
+      );
+
+      expect(mockLogRepo.save).toHaveBeenCalledTimes(1);
+      expect(mockLogRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({ geofenceId: 0, eventType: 'SPEEDING' }),
+      );
+      expect(mockRedis.xack).toHaveBeenCalled();
+    });
+
+    it('maintenance: logged per task with the short type code', async () => {
+      const { service, mockLogRepo } = await buildService();
+
+      await runProcessEntry(
+        service,
+        makeEvent({
+          eventType: 'MAINTENANCE',
+          geofenceId: null,
+          geofenceName: '',
+          details: { taskId: 7, kind: 'OIL_CHANGE', state: 'DUE_SOON', leftKm: 450 },
+        }),
+      );
+
+      expect(mockLogRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({ geofenceId: 7, eventType: 'MAINT' }),
+      );
+    });
+
     it('idempotency: ACKs and skips when eventId already exists in DB', async () => {
       const { service, mockRedis, mockLogRepo } = await buildService({
         logRepoOverrides: {

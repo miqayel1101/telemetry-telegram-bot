@@ -109,3 +109,40 @@ describe('AlertFormatterService', () => {
     });
   });
 });
+
+describe('AlertFormatterService – fleet alerts (speeding, offline, maintenance)', () => {
+  const service = new AlertFormatterService();
+  const base = makeEvent({ geofenceId: null, geofenceName: '' });
+
+  it('speeding shows the speed and the fleet limit', () => {
+    const r = service.format({ ...base, eventType: 'SPEEDING', details: { speed: 112.4, limitKmh: 90 } }, en);
+    expect(r.text).toContain('Speeding');
+    expect(r.text).toContain('112 km/h, limit 90 km/h');
+    expect(r.inlineKeyboard?.[0]?.[0]?.callback_data).toBe('loc:42');
+  });
+
+  it('offline shows how long the car has been silent', () => {
+    const r = service.format({ ...base, eventType: 'OFFLINE', details: { offlineMinutes: 30 } }, hy);
+    expect(r.text).toContain('Կապ չկա');
+    expect(r.text).toContain('30 րոպե');
+  });
+
+  it('maintenance names the task and what is left, in the chat language', () => {
+    const r = service.format(
+      { ...base, eventType: 'MAINTENANCE', details: { kind: 'OIL_CHANGE', state: 'DUE_SOON', leftKm: 450, taskId: 7 } },
+      hy,
+    );
+    expect(r.text).toContain('Յուղի փոխարինում');
+    expect(r.text).toContain('մնաց 450 կմ');
+  });
+
+  it('an overdue custom task uses its own name', () => {
+    const r = service.format(
+      { ...base, eventType: 'MAINTENANCE', details: { kind: 'CUSTOM', title: 'Wipers', state: 'OVERDUE', leftDays: -5 } },
+      en,
+    );
+    expect(r.text).toContain('Wipers');
+    expect(r.text).toContain('overdue by 5 days');
+  });
+});
+

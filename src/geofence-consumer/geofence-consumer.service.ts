@@ -180,9 +180,10 @@ export class GeofenceConsumerService implements OnModuleInit, OnModuleDestroy {
       typeof parsed.fleetId !== 'number' ||
       typeof parsed.vehicleId !== 'number' ||
       typeof parsed.vehiclePlate !== 'string' ||
-      typeof parsed.geofenceId !== 'number' ||
-      typeof parsed.geofenceName !== 'string' ||
-      (parsed.eventType !== 'ENTRY' && parsed.eventType !== 'EXIT') ||
+      !EVENT_TYPES.includes(parsed.eventType) ||
+      // Zone alerts name their zone; the others have none
+      ((parsed.eventType === 'ENTRY' || parsed.eventType === 'EXIT') &&
+        (typeof parsed.geofenceId !== 'number' || typeof parsed.geofenceName !== 'string')) ||
       typeof parsed.timestamp !== 'string'
     ) {
       throw new Error('Invalid event payload schema');
@@ -213,8 +214,8 @@ export class GeofenceConsumerService implements OnModuleInit, OnModuleDestroy {
       const dedupExists = await logRepo
         .createQueryBuilder('log')
         .where('log.vehicleId = :vehicleId', { vehicleId: event.vehicleId })
-        .andWhere('log.geofenceId = :geofenceId', { geofenceId: event.geofenceId })
-        .andWhere('log.eventType = :eventType', { eventType: event.eventType })
+        .andWhere('log.geofenceId = :geofenceId', { geofenceId: logSubject(event) })
+        .andWhere('log.eventType = :eventType', { eventType: logType(event) })
         .andWhere(`log.firedAt > NOW() - INTERVAL '60 seconds'`)
         .getExists();
 
@@ -289,8 +290,8 @@ export class GeofenceConsumerService implements OnModuleInit, OnModuleDestroy {
         eventId: event.eventId,
         fleetId: event.fleetId,
         vehicleId: event.vehicleId,
-        geofenceId: event.geofenceId,
-        eventType: event.eventType,
+        geofenceId: logSubject(event),
+        eventType: logType(event),
         firedAt: new Date(event.timestamp),
         telegramMessageId,
         chatId: fleetChat.chatId,
@@ -344,4 +345,20 @@ export class GeofenceConsumerService implements OnModuleInit, OnModuleDestroy {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+const EVENT_TYPES: string[] = ['ENTRY', 'EXIT', 'SPEEDING', 'OFFLINE', 'MAINTENANCE'];
+
+/**
+ * What the log's geofenceId column holds: the zone, or for maintenance the
+ * task (so two tasks of one car aren't taken as duplicates), else 0.
+ */
+function logSubject(event: IGeofenceStreamEvent): number {
+  if (event.geofenceId !== null && event.geofenceId !== undefined) return event.geofenceId;
+  return event.eventType === 'MAINTENANCE' ? (event.details?.taskId ?? 0) : 0;
+}
+
+/** The log's eventType column is 10 characters long */
+function logType(event: IGeofenceStreamEvent): string {
+  return event.eventType === 'MAINTENANCE' ? 'MAINT' : event.eventType;
 }
